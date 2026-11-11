@@ -7,6 +7,7 @@ import { resourceRouter } from './routes/resources.js'
 import { getDashboard } from './services/resources.js'
 
 export const app = express()
+export default app
 
 const configuredOrigins = process.env.CLIENT_ORIGIN
   ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
