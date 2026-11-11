@@ -1,15 +1,19 @@
-import 'dotenv/config'
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import type { AddressInfo } from 'node:net'
-import { app } from './app.js'
-import { query } from './database/connection.js'
+import dotenv from 'dotenv'
+
+dotenv.config({ quiet: true })
+dotenv.config({ path: '../.env.local', quiet: true })
+
+const { app } = await import('./app.js')
+const { query } = await import('./database/connection.js')
 
 let server: ReturnType<typeof app.listen>
 let baseUrl: string
 const storageConfigured = Boolean(
-  process.env.DATABASE_URL && process.env.S3_ENDPOINT && process.env.S3_REGION
-  && process.env.S3_BUCKET && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY,
+  process.env.DATABASE_URL && process.env.AWS_ENDPOINT_URL_S3 && process.env.AWS_REGION
+  && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY,
 )
 
 before(async () => {
@@ -100,13 +104,24 @@ test('reports missing Neon configuration explicitly', { skip: Boolean(process.en
   assert.match((await response.json()).error, /DATABASE_URL/)
 })
 
-test('reports missing private object-storage configuration explicitly', { skip: storageConfigured }, async () => {
-  const body = new FormData()
-  body.append('subject_id', '65cbe0ac-55fa-4dfb-9344-1ff4f22b9453')
-  body.append('file', new Blob(['school notes'], { type: 'text/plain' }), 'notes.txt')
-  const response = await fetch(`${baseUrl}/api/files`, { method: 'POST', body })
-  assert.equal(response.status, 503)
-  assert.match((await response.json()).error, /S3-kompatiblen Speicher/)
+test('reports missing Neon Object Storage configuration explicitly', async () => {
+  const keys = ['AWS_ENDPOINT_URL_S3', 'AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] as const
+  const previous = new Map(keys.map((key) => [key, process.env[key]]))
+  for (const key of keys) delete process.env[key]
+  try {
+    const body = new FormData()
+    body.append('subject_id', '65cbe0ac-55fa-4dfb-9344-1ff4f22b9453')
+    body.append('file', new Blob(['school notes'], { type: 'text/plain' }), 'notes.txt')
+    const response = await fetch(`${baseUrl}/api/files`, { method: 'POST', body })
+    assert.equal(response.status, 503)
+    assert.match((await response.json()).error, /Neon Object Storage/)
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key)
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 })
 
 test('rejects uploads larger than the serverless-safe file limit', async () => {
@@ -247,11 +262,22 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
 
     const download = await fetch(`${baseUrl}/api/files/${fileId}/download`)
     assert.equal(download.status, 200)
-    assert.match((await download.json()).url, /^https?:\/\//)
+    const { url } = await download.json() as { url: string }
+    assert.match(url, /^https?:\/\//)
+    const downloaded = await fetch(url)
+    assert.equal(downloaded.status, 200)
+    assert.equal(await downloaded.text(), 'school notes')
 
     const deleted = await fetch(`${baseUrl}/api/files/${fileId}`, { method: 'DELETE' })
     assert.equal(deleted.status, 204)
     fileId = ''
+
+    const invalidSubjectBody = new FormData()
+    invalidSubjectBody.append('subject_id', crypto.randomUUID())
+    invalidSubjectBody.append('file', new Blob(['school notes'], { type: 'text/plain' }), 'orphan-check.txt')
+    const failedUpload = await fetch(`${baseUrl}/api/files`, { method: 'POST', body: invalidSubjectBody })
+    assert.equal(failedUpload.status, 409)
+    assert.match((await failedUpload.json()).error, /Fach fehlt/)
   } finally {
     if (fileId) await fetch(`${baseUrl}/api/files/${fileId}`, { method: 'DELETE' })
     await fetch(`${baseUrl}/api/subjects/${subject.id}`, { method: 'DELETE' })

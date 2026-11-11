@@ -1,16 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { Files } from 'files-sdk'
+import { neon } from 'files-sdk/neon'
 import { AppError, query } from '../database/connection.js'
 import type { StoredFile } from '../types/domain.js'
 
 const maxFileSize = 4 * 1024 * 1024
+const storageBucket = 'uploads'
 const allowedTypes: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
@@ -34,19 +30,11 @@ function hasExpectedSignature(file: Express.Multer.File, extension: string) {
 }
 
 function getStorage() {
-  const { S3_ENDPOINT, S3_REGION, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY } = process.env
-  if (!S3_ENDPOINT || !S3_REGION || !S3_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
-    throw new AppError('Der Dateispeicher ist nicht konfiguriert. Hinterlege die Umgebungsvariablen für den S3-kompatiblen Speicher.', 503)
+  const { AWS_ENDPOINT_URL_S3, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } = process.env
+  if (!AWS_ENDPOINT_URL_S3 || !AWS_REGION || !AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
+    throw new AppError('Der Dateispeicher ist nicht konfiguriert. Hinterlege die von Neon Object Storage generierten AWS_* Umgebungsvariablen.', 503)
   }
-  return {
-    bucket: S3_BUCKET,
-    client: new S3Client({
-      endpoint: S3_ENDPOINT,
-      region: S3_REGION,
-      forcePathStyle: true,
-      credentials: { accessKeyId: S3_ACCESS_KEY_ID, secretAccessKey: S3_SECRET_ACCESS_KEY },
-    }),
-  }
+  return new Files({ adapter: neon({ bucket: storageBucket }) })
 }
 
 export async function listFiles() {
@@ -66,14 +54,9 @@ export async function uploadFile(file: Express.Multer.File | undefined, subjectI
     throw new AppError('Dieser Dateityp wird nicht unterstützt oder der Inhalt passt nicht zur Dateiendung.', 415)
   }
 
-  const { client, bucket } = getStorage()
+  const storage = getStorage()
   const objectKey = `${randomUUID()}`
-  await client.send(new PutObjectCommand({
-    Bucket: bucket,
-    Key: objectKey,
-    Body: file.buffer,
-    ContentType: file.mimetype,
-  }))
+  await storage.upload(objectKey, file.buffer, { contentType: file.mimetype })
 
   try {
     const records = await query<StoredFile & Record<string, unknown>>(
@@ -83,7 +66,7 @@ export async function uploadFile(file: Express.Multer.File | undefined, subjectI
     )
     return records[0]
   } catch (error) {
-    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }))
+    await storage.delete(objectKey)
     throw error
   }
 }
@@ -95,12 +78,11 @@ export async function downloadFile(id: string) {
   )
   const file = records[0]
   if (!file) throw new AppError('Datei nicht gefunden.', 404)
-  const { client, bucket } = getStorage()
-  const url = await getSignedUrl(client, new GetObjectCommand({
-    Bucket: bucket,
-    Key: file.object_key,
-    ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
-  }), { expiresIn: 60 })
+  const storage = getStorage()
+  const url = await storage.url(file.object_key, {
+    expiresIn: 60,
+    responseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+  })
   return { url }
 }
 
@@ -111,7 +93,7 @@ export async function deleteFile(id: string) {
   )
   const file = records[0]
   if (!file) throw new AppError('Datei nicht gefunden.', 404)
-  const { client, bucket } = getStorage()
-  await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: file.object_key }))
+  const storage = getStorage()
+  await storage.delete(file.object_key)
   await query('DELETE FROM stored_files WHERE id = $1', [id])
 }
