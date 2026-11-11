@@ -3,9 +3,14 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import type { AddressInfo } from 'node:net'
 import { app } from './app.js'
+import { query } from './database/connection.js'
 
 let server: ReturnType<typeof app.listen>
 let baseUrl: string
+const storageConfigured = Boolean(
+  process.env.DATABASE_URL && process.env.S3_ENDPOINT && process.env.S3_REGION
+  && process.env.S3_BUCKET && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY,
+)
 
 before(async () => {
   server = app.listen(0)
@@ -50,13 +55,74 @@ test('returns a consistent not-found response', async () => {
   assert.equal((await response.json()).error, 'Diese API-Route wurde nicht gefunden.')
 })
 
+test('allows CORS preflight from the production frontend origin', async () => {
+  const response = await fetch(`${baseUrl}/api/assignments`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://schulplan.vercel.app',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type',
+    },
+  })
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://schulplan.vercel.app')
+  assert.match(response.headers.get('access-control-allow-methods') ?? '', /POST/)
+  assert.match(response.headers.get('access-control-allow-headers') ?? '', /Content-Type/i)
+})
+
+test('does not grant CORS access to an untrusted browser origin', async () => {
+  const response = await fetch(`${baseUrl}/api/assignments`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://untrusted.example',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type',
+    },
+  })
+  assert.equal(response.headers.get('access-control-allow-origin'), null)
+})
+
+test('exports the Express app as the Vercel serverless entrypoint', async () => {
+  const original = process.env.VERCEL
+  process.env.VERCEL = '1'
+  try {
+    const entrypoint = await import('./index.js')
+    assert.equal(entrypoint.default, app)
+  } finally {
+    if (original === undefined) delete process.env.VERCEL
+    else process.env.VERCEL = original
+  }
+})
+
 test('reports missing Neon configuration explicitly', { skip: Boolean(process.env.DATABASE_URL) }, async () => {
   const response = await fetch(`${baseUrl}/api/health`)
   assert.equal(response.status, 503)
   assert.match((await response.json()).error, /DATABASE_URL/)
 })
 
+test('reports missing private object-storage configuration explicitly', { skip: storageConfigured }, async () => {
+  const body = new FormData()
+  body.append('subject_id', '65cbe0ac-55fa-4dfb-9344-1ff4f22b9453')
+  body.append('file', new Blob(['school notes'], { type: 'text/plain' }), 'notes.txt')
+  const response = await fetch(`${baseUrl}/api/files`, { method: 'POST', body })
+  assert.equal(response.status, 503)
+  assert.match((await response.json()).error, /S3-kompatiblen Speicher/)
+})
+
+test('rejects uploads larger than the serverless-safe file limit', async () => {
+  const body = new FormData()
+  body.append('subject_id', '65cbe0ac-55fa-4dfb-9344-1ff4f22b9453')
+  body.append('file', new Blob([new Uint8Array(4 * 1024 * 1024 + 1)], { type: 'text/plain' }), 'large.txt')
+  const response = await fetch(`${baseUrl}/api/files`, { method: 'POST', body })
+  assert.equal(response.status, 413)
+  assert.match((await response.json()).error, /4 MB/)
+})
+
 test('persists and isolates all shared-workspace resources', { skip: !process.env.DATABASE_URL }, async () => {
+  const healthResponse = await fetch(`${baseUrl}/api/health`)
+  assert.equal(healthResponse.status, 200)
+  assert.deepEqual(await healthResponse.json(), { status: 'ok' })
+
   const subjectResponse = await fetch(`${baseUrl}/api/subjects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -64,6 +130,8 @@ test('persists and isolates all shared-workspace resources', { skip: !process.en
   })
   assert.equal(subjectResponse.status, 201)
   const subject = (await subjectResponse.json()).data as { id: string }
+  const listedSubjects = await fetch(`${baseUrl}/api/subjects`)
+  assert.ok(((await listedSubjects.json()).data as Array<{ id: string }>).some((item) => item.id === subject.id))
 
   const json = (url: string, method: string, data?: object) => fetch(`${baseUrl}/api${url}`, {
     method,
@@ -75,6 +143,11 @@ test('persists and isolates all shared-workspace resources', { skip: !process.en
   const note = { subject_id: subject.id, title: 'API test note', content: 'Initial note' }
   const createdIds: Array<{ path: string; id: string }> = []
   try {
+    const updatedSubject = await json(`/subjects/${subject.id}`, 'PUT', {
+      name: `API test updated ${crypto.randomUUID()}`, description: 'Updated', color: '#7568D9',
+    })
+    assert.equal(updatedSubject.status, 200)
+
     for (const [path, record] of [['/assignments', assignment], ['/presentations', presentation], ['/notes', note]] as const) {
       const createdResponse = await json(path, 'POST', record)
       assert.equal(createdResponse.status, 201)
@@ -86,6 +159,19 @@ test('persists and isolates all shared-workspace resources', { skip: !process.en
       assert.ok(((await listResponse.json()).data as Array<{ id: string }>).some((item) => item.id === created.id))
     }
 
+    const dashboardResponse = await json('/dashboard', 'GET')
+    assert.equal(dashboardResponse.status, 200)
+    const dashboard = (await dashboardResponse.json()).data as {
+      assignments: Array<{ id: string }>
+      presentations: Array<{ id: string }>
+      notes: Array<{ id: string }>
+      subjects: Array<{ id: string }>
+    }
+    assert.ok(dashboard.assignments.some((item) => item.id === createdIds[0]?.id))
+    assert.ok(dashboard.presentations.some((item) => item.id === createdIds[1]?.id))
+    assert.ok(dashboard.notes.some((item) => item.id === createdIds[2]?.id))
+    assert.ok(dashboard.subjects.some((item) => item.id === subject.id))
+
     const blockedDelete = await json(`/subjects/${subject.id}`, 'DELETE')
     assert.equal(blockedDelete.status, 409)
 
@@ -93,16 +179,48 @@ test('persists and isolates all shared-workspace resources', { skip: !process.en
       const response = await json(`${record.path}/${record.id}`, 'DELETE')
       assert.equal(response.status, 204)
     }
+    const deletedSubject = await json(`/subjects/${subject.id}`, 'DELETE')
+    assert.equal(deletedSubject.status, 204)
   } finally {
     for (const record of createdIds) await json(`${record.path}/${record.id}`, 'DELETE')
     await json(`/subjects/${subject.id}`, 'DELETE')
   }
 })
 
-const storageConfigured = Boolean(
-  process.env.DATABASE_URL && process.env.S3_ENDPOINT && process.env.S3_REGION
-  && process.env.S3_BUCKET && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY,
-)
+test('persists and returns file metadata from Neon without storing file bytes', { skip: !process.env.DATABASE_URL }, async () => {
+  const subjectResponse = await fetch(`${baseUrl}/api/subjects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: `File metadata test ${crypto.randomUUID()}`, description: '', color: '#7568D9' }),
+  })
+  assert.equal(subjectResponse.status, 201)
+  const subject = (await subjectResponse.json()).data as { id: string }
+  const objectKey = `api-test-${crypto.randomUUID()}`
+  let fileId = ''
+  try {
+    const records = await query<{ id: string }>(
+      `INSERT INTO stored_files (subject_id, filename, content_type, size_bytes, object_key)
+        VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [subject.id, 'metadata-test.txt', 'text/plain', 12, objectKey],
+    )
+    fileId = records[0]!.id
+
+    const listing = await fetch(`${baseUrl}/api/files`)
+    assert.equal(listing.status, 200)
+    const files = (await listing.json()).data as Array<{
+      id: string; subject_id: string; filename: string; size_bytes: number; subject_name: string
+    }>
+    const metadata = files.find((item) => item.id === fileId)
+    assert.ok(metadata)
+    assert.equal(metadata.filename, 'metadata-test.txt')
+    assert.equal(metadata.size_bytes, 12)
+    assert.equal(metadata.subject_id, subject.id)
+    assert.equal(typeof metadata.subject_name, 'string')
+  } finally {
+    if (fileId) await query('DELETE FROM stored_files WHERE id = $1', [fileId])
+    await fetch(`${baseUrl}/api/subjects/${subject.id}`, { method: 'DELETE' })
+  }
+})
 
 test('uploads, lists, downloads, and deletes files with configured storage', { skip: !storageConfigured }, async () => {
   const subjectResponse = await fetch(`${baseUrl}/api/subjects`, {

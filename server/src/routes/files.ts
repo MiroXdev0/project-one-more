@@ -6,7 +6,14 @@ import { deleteFile, downloadFile, listFiles, uploadFile } from '../services/fil
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  limits: {
+    fileSize: 4 * 1024 * 1024,
+    files: 1,
+    fields: 1,
+    parts: 2,
+    fieldNameSize: 100,
+    fieldSize: 100,
+  },
 })
 
 export const filesRouter = Router()

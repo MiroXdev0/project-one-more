@@ -10,7 +10,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { AppError, query } from '../database/connection.js'
 import type { StoredFile } from '../types/domain.js'
 
-const maxFileSize = 10 * 1024 * 1024
+const maxFileSize = 4 * 1024 * 1024
 const allowedTypes: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
@@ -60,7 +60,7 @@ export async function listFiles() {
 
 export async function uploadFile(file: Express.Multer.File | undefined, subjectId: string) {
   if (!file) throw new AppError('Bitte wähle eine Datei zum Hochladen aus.', 400)
-  if (file.size > maxFileSize) throw new AppError('Dateien dürfen höchstens 10 MB groß sein.', 413)
+  if (file.size > maxFileSize) throw new AppError('Dateien dürfen höchstens 4 MB groß sein.', 413)
   const extension = extname(file.originalname).toLowerCase()
   if (allowedTypes[extension] !== file.mimetype || !hasExpectedSignature(file, extension)) {
     throw new AppError('Dieser Dateityp wird nicht unterstützt oder der Inhalt passt nicht zur Dateiendung.', 415)

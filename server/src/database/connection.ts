@@ -24,7 +24,7 @@ export async function query<Row extends Record<string, unknown> = Record<string,
   try {
     return await sql.query(statement, parameters) as Row[]
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === '23503') {
+    if (error && typeof error === 'object' && 'code' in error && (error.code === '23503' || error.code === '23001')) {
       throw new AppError('Das Fach fehlt oder enthält noch verknüpfte Inhalte. Ordne diese neu zu oder lösche sie, bevor du das Fach entfernst.', 409)
     }
     if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {

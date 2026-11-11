@@ -37,15 +37,15 @@ The app starts with empty states instead of sample data. Create a subject first;
 |---|---|---:|---|
 | `DATABASE_URL` | server | Yes | Neon Postgres connection string |
 | `PORT` | server | No | API port (default `3000`) |
-| `CLIENT_ORIGIN` | server | No | Allowed browser origin for CORS (default `http://localhost:5173`) |
-| `S3_ENDPOINT` | server | For files | S3-compatible object-storage endpoint |
+| `CLIENT_ORIGIN` | server | Production | Exact allowed browser origin(s), comma-separated (Vercel production: `https://schulplan.vercel.app`) |
+| `S3_ENDPOINT` | server | Yes for files | S3-compatible object-storage endpoint |
 | `S3_REGION` | server | For files | Object-storage region |
 | `S3_BUCKET` | server | For files | Private bucket name |
 | `S3_ACCESS_KEY_ID` | server | For files | Bucket credentials |
 | `S3_SECRET_ACCESS_KEY` | server | For files | Bucket credentials |
-| `VITE_API_URL` | client | Separate deployment only | Public API origin; leave empty for same-origin hosting |
+| `VITE_API_URL` | client | Production | Public backend origin (for example `https://<backend-project>.vercel.app`); leave empty only for local Vite proxy development |
 
-File uploads use S3-compatible object storage; binary contents are not stored in Postgres. Uploads are limited to 10 MB and checked against supported extensions, MIME types, and file signatures. Download links are short-lived. Configure the storage bucket as private and restrict its credentials to the app's required bucket operations. The API reports a clear configuration error until all storage variables are set.
+File uploads use S3-compatible object storage; binary contents are not stored in Postgres. Uploads are limited to 4 MB and checked against supported extensions, MIME types, and file signatures. The limit leaves room below Vercel Functions' 4.5 MB request-body cap for multipart overhead. Download links are short-lived. Configure the storage bucket as private and restrict its credentials to the app's required bucket operations. The API reports a clear configuration error until all storage variables are set.
 
 ## Database and API
 
@@ -68,9 +68,58 @@ The Express API validates payloads and returns `{ "error": "..." }` for failures
 | `GET`, `POST` | `/api/files` | List files or upload multipart field `file` with `subject_id` |
 | `GET`, `DELETE` | `/api/files/:id/download`, `/api/files/:id` | Download or delete a stored file |
 
-## Deployment
+## Vercel deployment
 
-Deploy `client/` as a Vercel Vite project and `server/` as a separate Vercel Node project. The server includes a catch-all Express function in `server/api/[...path].ts`. Configure `DATABASE_URL` and `CLIENT_ORIGIN` in the server project's environment; configure the five S3 settings to enable uploads. Set the frontend's `VITE_API_URL` to the deployed server origin, or route both apps through a same-origin API proxy. Run the migration command once against the target Neon branch before opening the app.
+The UI already deployed at `https://schulplan.vercel.app` and the API are separate Vercel projects. The backend is an Express Vercel Function: `server/src/index.ts` default-exports the existing Express app and only opens a local listener outside Vercel. Vercel's Express framework support routes requests through this application; do not add a competing `/api` catch-all function.
+
+### Backend Vercel project
+
+1. In Vercel, add a project from this GitHub repository (`MiroXdev0/project-one-more`).
+2. Set **Root Directory** to `server`. Enable **Include source files outside of the Root Directory** only if the Vercel project requires it; the function and its dependencies are all under `server/`.
+3. Use the **Express** framework preset. Set **Install Command** to `npm install` and **Build Command** to `npm run build`. Leave **Output Directory** unset; Vercel deploys the Express app as a Node.js Function.
+4. Add the backend variables below to the Vercel project's Production environment (and Preview only if you intend previews to use the same shared data/storage).
+5. Deploy. The resulting production origin, for example `https://<backend-project>.vercel.app`, is the backend URL. Confirm `https://<backend-project>.vercel.app/api/health` returns `{"status":"ok"}` before proceeding.
+
+Backend Production environment variables:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Neon Postgres application connection string; use the pooled hostname (`-pooler`) for serverless app queries |
+| `S3_ENDPOINT` | Your S3-compatible storage endpoint |
+| `S3_REGION` | Storage region (use `auto` if required by the provider) |
+| `S3_BUCKET` | Private bucket name |
+| `S3_ACCESS_KEY_ID` | Storage access key; keep server-only |
+| `S3_SECRET_ACCESS_KEY` | Storage secret; keep server-only |
+| `CLIENT_ORIGIN` | Exactly `https://schulplan.vercel.app` |
+
+Set all values in Vercel Project Settings → Environment Variables. Do not commit credentials or put storage/database variables on the frontend.
+
+### Neon schema migration and connectivity
+
+Run the migration from the repository root with a **direct (non-pooled) Neon connection string** available as `DATABASE_URL`:
+
+```sh
+npm --prefix server run migrate
+```
+
+In PowerShell, set the value for the current terminal before running the command, or copy `server/.env.example` to `server/.env` and replace its placeholder locally. Do not paste credentials into source control or chat. The script records applied migration versions and can be safely rerun. After deploying, check `/api/health`; it performs a live `SELECT 1` through the centralized Neon connection. Do not point migration runs at a pooled hostname.
+
+### Connect the deployed frontend
+
+In the existing `schulplan.vercel.app` frontend project, set **Production** `VITE_API_URL` to the exact backend origin from the backend project's Domains page (origin only, no `/api` suffix), such as `https://<backend-project>.vercel.app`. Redeploy the frontend, because Vite embeds `VITE_API_URL` at build time. The client then calls `<VITE_API_URL>/api/...`; it does not fall back to mock data or an unconfigured same-origin API in production.
+
+The CORS allowlist is configured on the backend using `CLIENT_ORIGIN`. It allows only configured exact origins; without the setting, Vercel defaults to the production frontend origin and local development also allows Vite. CORS controls browser access, not authorization or API access by non-browser clients.
+
+### Verification after configuring Vercel and Neon
+
+```sh
+npm --prefix client run lint
+npm --prefix client run build
+npm --prefix server run build
+npm --prefix server test
+```
+
+With valid `DATABASE_URL`, the test suite also creates, lists, updates, and deletes a subject, assignment, presentation, and note; it checks that related subjects cannot be deleted and verifies that the dashboard returns persisted data. With all five S3 variables and a private test bucket, it also uploads, lists metadata, presigns a download, and deletes a file. Run those integration tests locally only against a non-production Neon branch and a dedicated test bucket; the tests create and clean up records/objects. The dashboard/API health checks and CRUD cannot be verified against production from this repository until valid service settings and the deployed backend origin are configured.
 
 Because this is a shared, unauthenticated workspace, CORS is not an access-control mechanism. Do not expose the API publicly if its data must be private or restricted to a particular group; choose an authenticated deployment before using it for sensitive student records.
 
@@ -83,4 +132,4 @@ npm --prefix server run build
 npm --prefix server test
 ```
 
-The API tests cover validation, unsupported uploads, and unknown routes without external credentials. Database CRUD integration tests run when `DATABASE_URL` is set and the migration has been applied. File upload/download against object storage requires the S3 settings and a configured bucket.
+The API tests cover validation, rejected/mismatched file content, request limits, CORS preflight/denial, missing database configuration, and unknown routes without external credentials. Database CRUD integration tests run when `DATABASE_URL` is set and the migration has been applied. File upload/download against object storage requires the S3 settings and a configured bucket.

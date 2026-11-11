@@ -8,7 +8,25 @@ import { getDashboard } from './services/resources.js'
 
 export const app = express()
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' }))
+const configuredOrigins = process.env.CLIENT_ORIGIN
+  ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : process.env.VERCEL === '1'
+    ? ['https://schulplan.vercel.app']
+    : ['https://schulplan.vercel.app', 'http://localhost:5173']
+const allowedOrigins = configuredOrigins.map((value) => {
+  const url = new URL(value)
+  if (!['http:', 'https:'].includes(url.protocol) || url.origin !== value) {
+    throw new Error(`CLIENT_ORIGIN must contain exact HTTP(S) origins without paths: ${value}`)
+  }
+  return url.origin
+})
+
+app.use(cors({
+  origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin)),
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400,
+}))
 app.use(express.json({ limit: '1mb' }))
 
 app.get('/api/health', async (_request, response) => {
@@ -31,7 +49,7 @@ const errorHandler: ErrorRequestHandler = (error: unknown, _request, response, _
     return
   }
   if (error instanceof multer.MulterError) {
-    const message = error.code === 'LIMIT_FILE_SIZE' ? 'Dateien dürfen höchstens 10 MB groß sein.' : 'Der Upload konnte nicht verarbeitet werden.'
+    const message = error.code === 'LIMIT_FILE_SIZE' ? 'Dateien dürfen höchstens 4 MB groß sein.' : 'Der Upload konnte nicht verarbeitet werden.'
     response.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: message })
     return
   }
