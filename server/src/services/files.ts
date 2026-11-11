@@ -40,10 +40,20 @@ function getStorage() {
 export async function listFiles() {
   return query<StoredFile & Record<string, unknown>>(
     `SELECT f.id, f.subject_id, s.name AS subject_name, f.filename, f.content_type, f.size_bytes::int AS size_bytes,
-      f.object_key, f.created_at
+      f.created_at
       FROM stored_files f LEFT JOIN subjects s ON s.id = f.subject_id
       ORDER BY f.created_at DESC`,
   )
+}
+
+async function findFile(id: string) {
+  const records = await query<StoredFile & Record<string, unknown>>(
+    'SELECT * FROM stored_files WHERE id = $1',
+    [id],
+  )
+  const file = records[0]
+  if (!file) throw new AppError('Datei nicht gefunden.', 404)
+  return file
 }
 
 export async function uploadFile(file: Express.Multer.File | undefined, subjectId: string) {
@@ -71,13 +81,20 @@ export async function uploadFile(file: Express.Multer.File | undefined, subjectI
   }
 }
 
-export async function downloadFile(id: string) {
+export async function renameFile(id: string, filename: string) {
+  const file = await findFile(id)
+  if (allowedTypes[extname(filename).toLowerCase()] !== file.content_type) {
+    throw new AppError('Die Dateiendung muss zum ursprünglichen Dateityp passen.', 400)
+  }
   const records = await query<StoredFile & Record<string, unknown>>(
-    'SELECT * FROM stored_files WHERE id = $1',
-    [id],
+    'UPDATE stored_files SET filename = $1, updated_at = NOW() WHERE id = $2 RETURNING id, subject_id, filename, content_type, size_bytes::int AS size_bytes, created_at',
+    [filename, id],
   )
-  const file = records[0]
-  if (!file) throw new AppError('Datei nicht gefunden.', 404)
+  return records[0]
+}
+
+export async function downloadFile(id: string) {
+  const file = await findFile(id)
   const storage = getStorage()
   const url = await storage.url(file.object_key, {
     expiresIn: 60,
@@ -86,13 +103,21 @@ export async function downloadFile(id: string) {
   return { url }
 }
 
+export async function previewFile(id: string) {
+  const file = await findFile(id)
+  if (!['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(file.content_type)) {
+    throw new AppError('Für diesen Dateityp ist keine Vorschau verfügbar.', 415)
+  }
+  const storage = getStorage()
+  const url = await storage.url(file.object_key, {
+    expiresIn: 300,
+    responseContentDisposition: 'inline',
+  })
+  return { url, content_type: file.content_type }
+}
+
 export async function deleteFile(id: string) {
-  const records = await query<StoredFile & Record<string, unknown>>(
-    'SELECT * FROM stored_files WHERE id = $1',
-    [id],
-  )
-  const file = records[0]
-  if (!file) throw new AppError('Datei nicht gefunden.', 404)
+  const file = await findFile(id)
   const storage = getStorage()
   await storage.delete(file.object_key)
   await query('DELETE FROM stored_files WHERE id = $1', [id])

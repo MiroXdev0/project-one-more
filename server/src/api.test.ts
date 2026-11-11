@@ -223,14 +223,15 @@ test('persists and returns file metadata from Neon without storing file bytes', 
     const listing = await fetch(`${baseUrl}/api/files`)
     assert.equal(listing.status, 200)
     const files = (await listing.json()).data as Array<{
-      id: string; subject_id: string; filename: string; size_bytes: number; subject_name: string
-    }>
-    const metadata = files.find((item) => item.id === fileId)
-    assert.ok(metadata)
-    assert.equal(metadata.filename, 'metadata-test.txt')
-    assert.equal(metadata.size_bytes, 12)
-    assert.equal(metadata.subject_id, subject.id)
-    assert.equal(typeof metadata.subject_name, 'string')
+        id: string; subject_id: string; filename: string; size_bytes: number; subject_name: string; object_key?: string
+      }>
+      const metadata = files.find((item) => item.id === fileId)
+      assert.ok(metadata)
+      assert.equal(metadata.filename, 'metadata-test.txt')
+      assert.equal(metadata.size_bytes, 12)
+      assert.equal(metadata.subject_id, subject.id)
+      assert.equal(typeof metadata.subject_name, 'string')
+      assert.equal(metadata.object_key, undefined)
   } finally {
     if (fileId) await query('DELETE FROM stored_files WHERE id = $1', [fileId])
     await fetch(`${baseUrl}/api/subjects/${subject.id}`, { method: 'DELETE' })
@@ -246,6 +247,7 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
   assert.equal(subjectResponse.status, 201)
   const subject = (await subjectResponse.json()).data as { id: string }
   let fileId = ''
+  let previewFileId = ''
   try {
     const body = new FormData()
     body.append('subject_id', subject.id)
@@ -255,6 +257,24 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
     const file = (await uploaded.json()).data as { id: string; filename: string }
     fileId = file.id
     assert.equal(file.filename, 'notes.txt')
+
+    const unsupportedPreview = await fetch(`${baseUrl}/api/files/${fileId}/preview`)
+    assert.equal(unsupportedPreview.status, 415)
+
+    const renamed = await fetch(`${baseUrl}/api/files/${fileId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: 'notes-renamed.txt' }),
+    })
+    assert.equal(renamed.status, 200)
+    assert.equal(((await renamed.json()).data as { filename: string }).filename, 'notes-renamed.txt')
+
+    const invalidRename = await fetch(`${baseUrl}/api/files/${fileId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: 'notes-renamed.pdf' }),
+    })
+    assert.equal(invalidRename.status, 400)
 
     const listing = await fetch(`${baseUrl}/api/files`)
     assert.equal(listing.status, 200)
@@ -268,6 +288,25 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
     assert.equal(downloaded.status, 200)
     assert.equal(await downloaded.text(), 'school notes')
 
+    const pdfBody = new FormData()
+    pdfBody.append('subject_id', subject.id)
+    pdfBody.append('file', new Blob(['%PDF-1.4\nSchulplan preview test'], { type: 'application/pdf' }), 'preview.pdf')
+    const pdfUpload = await fetch(`${baseUrl}/api/files`, { method: 'POST', body: pdfBody })
+    assert.equal(pdfUpload.status, 201)
+    previewFileId = ((await pdfUpload.json()).data as { id: string }).id
+
+    const previewResponse = await fetch(`${baseUrl}/api/files/${previewFileId}/preview`)
+    assert.equal(previewResponse.status, 200)
+    const preview = await previewResponse.json() as { url: string; content_type: string }
+    assert.equal(preview.content_type, 'application/pdf')
+    const previewDownload = await fetch(preview.url)
+    assert.equal(previewDownload.status, 200)
+    assert.match(await previewDownload.text(), /^%PDF-1\.4/)
+
+    const deletedPreview = await fetch(`${baseUrl}/api/files/${previewFileId}`, { method: 'DELETE' })
+    assert.equal(deletedPreview.status, 204)
+    previewFileId = ''
+
     const deleted = await fetch(`${baseUrl}/api/files/${fileId}`, { method: 'DELETE' })
     assert.equal(deleted.status, 204)
     fileId = ''
@@ -280,6 +319,7 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
     assert.match((await failedUpload.json()).error, /Fach fehlt/)
   } finally {
     if (fileId) await fetch(`${baseUrl}/api/files/${fileId}`, { method: 'DELETE' })
+    if (previewFileId) await fetch(`${baseUrl}/api/files/${previewFileId}`, { method: 'DELETE' })
     await fetch(`${baseUrl}/api/subjects/${subject.id}`, { method: 'DELETE' })
   }
 })
