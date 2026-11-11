@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<meta
+    name="description"
+    content="Persönlicher Schulorganizer für Aufgaben, Präsentationen, Notizen, Dateien und Fächer."
+>
+
+<meta
+    name="theme-color"
+    content="#2563eb"
+>
+
+<title>Schulorganizer</title>
+
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+
+        <div class="brand">
+        <img
+            class="brand-logo"
+            src="/logo.png"
+            alt="Schulorganizer Logo"
+        >
+
+            <div>
+            <h1>Schulorganizer</h1>
+            <span>Mein Schulbereich</span>
+            </div>
+        </div>
+
+        <nav class="navigation" aria-label="Hauptnavigation">
+
+            <button
+                class="nav-item active"
+                type="button"
+                data-page="dashboard"
+                aria-label="Übersicht"
+            >
+                <span class="nav-icon" data-icon="overview"></span>
+                <span data-mobile-label="Übersicht">Übersicht</span>
+            </button>
+
+            <button
+                class="nav-item"
+                type="button"
+                data-page="tasks"
+                aria-label="Aufgaben"
+            >
+                <span class="nav-icon" data-icon="task"></span>
+                <span data-mobile-label="Aufgaben">Aufgaben</span>
+            </button>
+
+            <button
+                class="nav-item"
+                type="button"
+                data-page="presentations"
+                aria-label="Präsentationen"
+            >
+                <span class="nav-icon" data-icon="presentation"></span>
+                <span data-mobile-label="Präs.">Präsentationen</span>
+            </button>
+
+            <button
+                class="nav-item"
+                type="button"
+                data-page="notes"
+                aria-label="Notizen"
+            >
+                <span class="nav-icon" data-icon="note"></span>
+                <span data-mobile-label="Notizen">Notizen</span>
+            </button>
+
+            <button
+                class="nav-item"
+                type="button"
+                data-page="files"
+                aria-label="Dateien"
+            >
+                <span class="nav-icon" data-icon="file"></span>
+                <span data-mobile-label="Dateien">Dateien</span>
+            </button>
+
+            <button
+                class="nav-item"
+                type="button"
+                data-page="subjects"
+                aria-label="Fächer"
+            >
+                <span class="nav-icon" data-icon="subjects"></span>
+                <span data-mobile-label="Fächer">Fächer</span>
+            </button>
+
+        </nav>
+
+        <div class="sidebar-footer">
+            <span>Schulorganizer</span>
+            <span class="version">v1.0</span>
+        </div>
+
+    </aside>
+
+
+    <!-- Main content -->
+    <main class="content">
+
+        <!-- Topbar -->
+        <header class="topbar">
+
+            <div class="topbar-info">
+                <h2 id="pageTitle">
+                    Übersicht
+                </h2>
+
+                <p id="pageDescription">
+                    Alles Wichtige auf einen Blick.
+                </p>
+            </div>
+
+            <div class="topbar-actions">
+
+                <button
+                    id="addButton"
+                    class="primary-button"
+                    type="button"
+                    aria-haspopup="true"
+                    aria-expanded="false"
+                    aria-controls="addMenu"
+                >
+                    <span class="button-icon" data-icon="plus"></span>
+                    <span>Hinzufügen</span>
+                </button>
+
+                <div id="addMenu" class="add-menu" role="menu" hidden>
+                    <button type="button" role="menuitem" data-add-type="tasks">Aufgabe hinzufügen</button>
+                    <button type="button" role="menuitem" data-add-type="presentations">Präsentation hinzufügen</button>
+                    <button type="button" role="menuitem" data-add-type="notes">Notiz hinzufügen</button>
+                    <button type="button" role="menuitem" data-add-type="files">Datei hochladen</button>
+                    <button type="button" role="menuitem" data-add-type="fileLink">Datei-Link hinzufügen</button>
+                    <button type="button" role="menuitem" data-add-type="subjects">Fach hinzufügen</button>
+                </div>
+
+            </div>
+
+        </header>
+
+
+        <!-- Dashboard -->
+        <section
+            id="dashboardPage"
+            class="page active-page"
+        >
+
+            <div class="dashboard-grid">
+
+                <button class="dashboard-card dashboard-link" type="button" data-dashboard-page="tasks" aria-label="Zu den Aufgaben">
+
+                    <div class="card-top">
+                        <span class="card-label">
+                            Aufgaben
+                        </span>
+
+                        <span class="card-icon" data-icon="task"></span>
+                    </div>
+
+                    <strong id="taskCount">
+                        0
+                    </strong>
+
+                    <span class="card-description">
+                        offene Aufgaben
+                    </span>
+
+                </button>
+
+
+                <button class="dashboard-card dashboard-link" type="button" data-dashboard-page="presentations" aria-label="Zu den Präsentationen">
+
+                    <div class="card-top">
+                        <span class="card-label">
+                            Präsentationen
+                        </span>
+
+                        <span class="card-icon" data-icon="presentation"></span>
+                    </div>
+
+                    <strong id="presentationCount">
+                        0
+                    </strong>
+
+                    <span class="card-description">
+                        gespeichert
+                    </span>
+
+                </button>
+
+
+                <button class="dashboard-card dashboard-link" type="button" data-dashboard-page="notes" aria-label="Zu den Notizen">
+
+                    <div class="card-top">
+                        <span class="card-label">
+                            Notizen
+                        </span>
+
+                        <span class="card-icon" data-icon="note"></span>
+                    </div>
+
+                    <strong id="noteCount">
+                        0
+                    </strong>
+
+                    <span class="card-description">
+                        gespeichert
+                    </span>
+
+                </button>
+
+
+                <button class="dashboard-card dashboard-link" type="button" data-dashboard-page="files" aria-label="Zu den Dateien">
+
+                    <div class="card-top">
+                        <span class="card-label">
+                            Dateien
+                        </span>
+
+                        <span class="card-icon" data-icon="file"></span>
+                    </div>
+
+                    <strong id="fileCount">
+                        0
+                    </strong>
+
+                    <span class="card-description">
+                        gespeichert
+                    </span>
+
+                </button>
+
+                <button class="dashboard-card dashboard-link" type="button" data-dashboard-page="subjects" aria-label="Zu den Fächern">
+                    <div class="card-top">
+                        <span class="card-label">Fächer</span>
+                        <span class="card-icon" data-icon="subjects"></span>
+                    </div>
+                    <strong id="subjectCount">0</strong>
+                    <span class="card-description">organisiert</span>
+                </button>
+
+            </div>
+
+
+            <section class="content-card">
+
+                <div class="section-header">
+
+                    <div>
+                        <h3>
+                            Aktuelle Aufgaben
+                        </h3>
+
+                        <p>
+                            Deine nächsten schulischen Aufgaben.
+                        </p>
+                    </div>
+
+                </div>
+
+                <div
+                    id="recentTasks"
+                    class="item-list"
+                >
+                    <div class="empty-state">
+                        Keine Aufgaben vorhanden.
+                    </div>
+                </div>
+
+            </section>
+
+        </section>
+
+
+        <!-- Tasks -->
+        <section
+            id="tasksPage"
+            class="page"
+        >
+
+            <div class="section-header">
+
+                <div>
+                    <h3>
+                        Aufgaben
+                    </h3>
+
+                    <p>
+                        Verwalte deine schulischen Aufgaben.
+                    </p>
+                </div>
+                <label class="subject-filter-field">
+                    <span>Nach Fach filtern</span>
+                    <select id="taskSubjectFilter" aria-label="Aufgaben nach Fach filtern"></select>
+                </label>
+
+            </div>
+
+            <div
+                id="taskList"
+                class="item-list"
+            >
+                <div class="empty-state">
+                    Keine Aufgaben vorhanden.
+                </div>
+            </div>
+
+        </section>
+
+
+        <!-- Presentations -->
+        <section
+            id="presentationsPage"
+            class="page"
+        >
+
+            <div class="section-header">
+
+                <div>
+                    <h3>
+                        Präsentationen
+                    </h3>
+
+                    <p>
+                        Erstelle Referatsprojekte, hänge Präsentationen und Materialien an und behalte Termine im Blick.
+                    </p>
+                </div>
+                <div class="presentation-header-actions">
+                    <button id="addPresentationProject" class="secondary-button" type="button">
+                        Projekt planen
+                    </button>
+                    <button id="uploadPresentation" class="primary-button" type="button">
+                        Präsentation hochladen
+                    </button>
+                </div>
+                <label class="subject-filter-field">
+                    <span>Nach Fach filtern</span>
+                    <select id="presentationSubjectFilter" aria-label="Präsentationen nach Fach filtern"></select>
+                </label>
+
+            </div>
+
+            <div
+                id="presentationList"
+                class="item-list"
+            >
+                <div class="empty-state">
+                    Keine Präsentationen vorhanden.
+                </div>
+            </div>
+
+        </section>
+
+
+        <!-- Notes -->
+        <section
+            id="notesPage"
+            class="page"
+        >
+
+            <div class="section-header">
+
+                <div>
+                    <h3>
+                        Notizen
+                    </h3>
+
+                    <p>
+                        Speichere wichtige Informationen und Notizen.
+                    </p>
+                </div>
+                <label class="subject-filter-field">
+                    <span>Nach Fach filtern</span>
+                    <select id="noteSubjectFilter" aria-label="Notizen nach Fach filtern"></select>
+                </label>
+
+            </div>
+
+            <div
+                id="noteList"
+                class="item-list"
+            >
+                <div class="empty-state">
+                    Keine Notizen vorhanden.
+                </div>
+            </div>
+
+        </section>
+
+
+        <!-- Files -->
+        <section
+            id="filesPage"
+            class="page"
+        >
+
+            <div class="section-header">
+
+                <div>
+                    <h3>
+                        Dateien
+                    </h3>
+
+                    <p>
+                        Verwalte deine schulischen Dateien.
+                    </p>
+                </div>
+                <label class="subject-filter-field">
+                    <span>Nach Fach filtern</span>
+                    <select id="fileSubjectFilter" aria-label="Dateien nach Fach filtern"></select>
+                </label>
+
+            </div>
+
+            <div
+                id="fileList"
+                class="item-list"
+            >
+                <div class="empty-state">
+                    Keine Dateien vorhanden.
+                </div>
+            </div>
+
+        </section>
+
+
+        <!-- Subjects -->
+        <section
+            id="subjectsPage"
+            class="page"
+        >
+
+            <div class="section-header">
+
+                <div>
+                    <h3>
+                        Fächer
+                    </h3>
+
+                    <p>
+                        Organisiere deine Inhalte nach Fach.
+                    </p>
+                </div>
+
+            </div>
+
+            <div
+                id="subjectList"
+                class="subject-grid"
+            >
+                <div class="empty-state">
+                    Keine Fächer vorhanden.
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+</div>
+
+
+<!-- Modal -->
+<div
+    id="modal"
+    class="modal"
+    aria-hidden="true"
+>
+
+    <div
+        class="modal-content"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modalTitle"
+        tabindex="-1"
+    >
+
+        <div class="modal-header">
+
+            <div>
+                <h2 id="modalTitle">
+                    Hinzufügen
+                </h2>
+            </div>
+
+            <button
+                id="modalClose"
+                class="modal-close"
+                type="button"
+                aria-label="Schließen"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <div
+            id="modalBody"
+            class="modal-body"
+        ></div>
+
+
+        <div class="modal-footer">
+
+            <button
+                id="modalCancel"
+                class="secondary-button"
+                type="button"
+            >
+                Abbrechen
+            </button>
+
+            <button
+                id="modalSubmit"
+                class="primary-button"
+                type="button"
+            >
+                Speichern
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- Toast notifications are created dynamically -->
+
+
+<script
+    type="module"
+    src="/src/main.js"
+></script>
+
+</body>
+</html>
