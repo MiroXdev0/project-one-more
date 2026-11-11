@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { AppError } from '../database/connection.js'
-import { createResource, deleteResource, listResource, updateResource } from '../services/resources.js'
+import { createResource, deleteResource, getResource, listResource, updateResource } from '../services/resources.js'
 import {
   assignmentSchema,
   noteSchema,
@@ -25,6 +25,11 @@ for (const resource of Object.keys(schemas) as ResourceName[]) {
 
   resourceRouter.get(path, async (_request, response) => {
     response.json({ data: await listResource(resource) })
+  })
+
+  resourceRouter.get(`${path}/:id`, async (request, response) => {
+    if (!z.uuid().safeParse(request.params.id).success) throw new AppError('Die Eintrags-ID ist ungültig.', 400)
+    response.json({ data: await getResource(resource, request.params.id!) })
   })
 
   resourceRouter.post(path, async (request, response) => {

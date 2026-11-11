@@ -111,6 +111,7 @@ test('reports missing Neon Object Storage configuration explicitly', async () =>
   try {
     const body = new FormData()
     body.append('subject_id', '65cbe0ac-55fa-4dfb-9344-1ff4f22b9453')
+    body.append('assignment_id', '')
     body.append('file', new Blob(['school notes'], { type: 'text/plain' }), 'notes.txt')
     const response = await fetch(`${baseUrl}/api/files`, { method: 'POST', body })
     assert.equal(response.status, 503)
@@ -154,7 +155,15 @@ test('persists and isolates all shared-workspace resources', { skip: !process.en
     ...(data ? { body: JSON.stringify(data) } : {}),
   })
   const assignment = { subject_id: subject.id, title: 'API test assignment', description: 'Initial', due_date: '2099-12-30', priority: 'medium', completed: false }
-  const presentation = { subject_id: subject.id, title: 'API test presentation', description: '', presentation_date: '2099-12-30', prep_status: 'not_started', notes: '' }
+  const presentation = {
+    subject_id: subject.id,
+    title: 'API test presentation',
+    description: '',
+    presentation_date: '2099-12-30',
+    prep_status: 'not_started',
+    notes: '',
+    slides: [{ title: 'Erste Folie', content: 'Gespeicherter Folieninhalt', image_file_id: null }],
+  }
   const note = { subject_id: subject.id, title: 'API test note', content: 'Initial note' }
   const createdIds: Array<{ path: string; id: string }> = []
   try {
@@ -172,6 +181,12 @@ test('persists and isolates all shared-workspace resources', { skip: !process.en
       assert.equal(updatedResponse.status, 200)
       const listResponse = await json(path, 'GET')
       assert.ok(((await listResponse.json()).data as Array<{ id: string }>).some((item) => item.id === created.id))
+      const detailResponse = await json(`${path}/${created.id}`, 'GET')
+      assert.equal(detailResponse.status, 200)
+      const details = (await detailResponse.json()).data as { id: string; title: string; slides?: Array<{ content: string }> }
+      assert.equal(details.id, created.id)
+      assert.equal(details.title, `${record.title} updated`)
+      if (path === '/presentations') assert.equal(details.slides?.[0]?.content, 'Gespeicherter Folieninhalt')
     }
 
     const dashboardResponse = await json('/dashboard', 'GET')
@@ -248,15 +263,50 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
   const subject = (await subjectResponse.json()).data as { id: string }
   let fileId = ''
   let previewFileId = ''
+  let imageFileId = ''
+  let imagePresentationId = ''
+  let assignmentId = ''
   try {
+    const assignmentResponse = await fetch(`${baseUrl}/api/assignments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject_id: subject.id,
+        title: 'File attachment integration',
+        description: '',
+        due_date: '2099-12-30',
+        priority: 'medium',
+        completed: false,
+      }),
+    })
+    assert.equal(assignmentResponse.status, 201)
+    assignmentId = ((await assignmentResponse.json()).data as { id: string }).id
+
     const body = new FormData()
     body.append('subject_id', subject.id)
+    body.append('assignment_id', assignmentId)
     body.append('file', new Blob(['school notes'], { type: 'text/plain' }), 'notes.txt')
     const uploaded = await fetch(`${baseUrl}/api/files`, { method: 'POST', body })
     assert.equal(uploaded.status, 201)
-    const file = (await uploaded.json()).data as { id: string; filename: string }
+    const file = (await uploaded.json()).data as { id: string; filename: string; assignment_id: string }
     fileId = file.id
     assert.equal(file.filename, 'notes.txt')
+    assert.equal(file.assignment_id, assignmentId)
+
+    const metadataResponse = await fetch(`${baseUrl}/api/files/${fileId}`)
+    assert.equal(metadataResponse.status, 200)
+    const metadata = (await metadataResponse.json()).data as { filename: string; object_key?: string }
+    assert.equal(metadata.filename, 'notes.txt')
+    assert.equal(metadata.object_key, undefined)
+
+    const contentResponse = await fetch(`${baseUrl}/api/files/${fileId}/content`)
+    assert.equal(contentResponse.status, 200)
+    assert.equal(contentResponse.headers.get('content-type'), 'text/plain')
+    assert.equal(await contentResponse.text(), 'school notes')
+
+    const attachmentListing = await fetch(`${baseUrl}/api/files?assignment_id=${assignmentId}`)
+    assert.equal(attachmentListing.status, 200)
+    assert.ok(((await attachmentListing.json()).data as Array<{ id: string }>).some((item) => item.id === fileId))
 
     const unsupportedPreview = await fetch(`${baseUrl}/api/files/${fileId}/preview`)
     assert.equal(unsupportedPreview.status, 415)
@@ -302,10 +352,51 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
     const previewDownload = await fetch(preview.url)
     assert.equal(previewDownload.status, 200)
     assert.match(await previewDownload.text(), /^%PDF-1\.4/)
+    const pdfContent = await fetch(`${baseUrl}/api/files/${previewFileId}/content`)
+    assert.equal(pdfContent.status, 200)
+    assert.match(await pdfContent.text(), /^%PDF-1\.4/)
+
+    const imageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/8xoAAAAASUVORK5CYII=', 'base64')
+    const imageBody = new FormData()
+    imageBody.append('subject_id', subject.id)
+    imageBody.append('file', new Blob([new Uint8Array(imageBytes)], { type: 'image/png' }), 'pixel.png')
+    const imageUpload = await fetch(`${baseUrl}/api/files`, { method: 'POST', body: imageBody })
+    assert.equal(imageUpload.status, 201)
+    imageFileId = ((await imageUpload.json()).data as { id: string }).id
+    const imageContent = await fetch(`${baseUrl}/api/files/${imageFileId}/content`)
+    assert.equal(imageContent.status, 200)
+    assert.equal(imageContent.headers.get('content-type'), 'image/png')
+    assert.deepEqual(Buffer.from(await imageContent.arrayBuffer()), imageBytes)
+
+    const imagePresentation = await fetch(`${baseUrl}/api/presentations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject_id: subject.id,
+        title: 'Image reference integration',
+        description: '',
+        presentation_date: '2099-12-30',
+        prep_status: 'in_progress',
+        notes: '',
+        slides: [{ title: 'Bildfolie', content: '', image_file_id: imageFileId }],
+      }),
+    })
+    assert.equal(imagePresentation.status, 201)
+    imagePresentationId = ((await imagePresentation.json()).data as { id: string }).id
 
     const deletedPreview = await fetch(`${baseUrl}/api/files/${previewFileId}`, { method: 'DELETE' })
     assert.equal(deletedPreview.status, 204)
     previewFileId = ''
+    const deletedImage = await fetch(`${baseUrl}/api/files/${imageFileId}`, { method: 'DELETE' })
+    assert.equal(deletedImage.status, 204)
+    imageFileId = ''
+    const presentationDetails = await fetch(`${baseUrl}/api/presentations/${imagePresentationId}`)
+    assert.equal(presentationDetails.status, 200)
+    const presentationData = (await presentationDetails.json()).data as { slides: Array<{ image_file_id: string | null }> }
+    assert.equal(presentationData.slides[0]?.image_file_id, null)
+    const deletedPresentation = await fetch(`${baseUrl}/api/presentations/${imagePresentationId}`, { method: 'DELETE' })
+    assert.equal(deletedPresentation.status, 204)
+    imagePresentationId = ''
 
     const deleted = await fetch(`${baseUrl}/api/files/${fileId}`, { method: 'DELETE' })
     assert.equal(deleted.status, 204)
@@ -320,6 +411,9 @@ test('uploads, lists, downloads, and deletes files with configured storage', { s
   } finally {
     if (fileId) await fetch(`${baseUrl}/api/files/${fileId}`, { method: 'DELETE' })
     if (previewFileId) await fetch(`${baseUrl}/api/files/${previewFileId}`, { method: 'DELETE' })
+    if (imageFileId) await fetch(`${baseUrl}/api/files/${imageFileId}`, { method: 'DELETE' })
+    if (imagePresentationId) await fetch(`${baseUrl}/api/presentations/${imagePresentationId}`, { method: 'DELETE' })
+    if (assignmentId) await fetch(`${baseUrl}/api/assignments/${assignmentId}`, { method: 'DELETE' })
     await fetch(`${baseUrl}/api/subjects/${subject.id}`, { method: 'DELETE' })
   }
 })

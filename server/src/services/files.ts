@@ -37,12 +37,14 @@ function getStorage() {
   return new Files({ adapter: neon({ bucket: storageBucket }) })
 }
 
-export async function listFiles() {
+export async function listFiles(assignmentId?: string) {
+  const filter = assignmentId ? 'WHERE f.assignment_id = $1' : ''
   return query<StoredFile & Record<string, unknown>>(
     `SELECT f.id, f.subject_id, s.name AS subject_name, f.filename, f.content_type, f.size_bytes::int AS size_bytes,
-      f.created_at
+      f.assignment_id, f.created_at
       FROM stored_files f LEFT JOIN subjects s ON s.id = f.subject_id
-      ORDER BY f.created_at DESC`,
+      ${filter} ORDER BY f.created_at DESC`,
+    assignmentId ? [assignmentId] : [],
   )
 }
 
@@ -56,12 +58,54 @@ async function findFile(id: string) {
   return file
 }
 
-export async function uploadFile(file: Express.Multer.File | undefined, subjectId: string) {
+function publicMetadata(file: StoredFile & Record<string, unknown>) {
+  const { object_key: _objectKey, ...metadata } = file
+  return metadata
+}
+
+export async function getFileMetadata(id: string) {
+  const rows = await query<StoredFile & Record<string, unknown>>(
+    `SELECT f.id, f.subject_id, s.name AS subject_name, f.assignment_id, f.filename,
+      f.content_type, f.size_bytes::int AS size_bytes, f.created_at
+      FROM stored_files f LEFT JOIN subjects s ON s.id = f.subject_id
+      WHERE f.id = $1`,
+    [id],
+  )
+  const file = rows[0]
+  if (!file) throw new AppError('Datei nicht gefunden.', 404)
+  return publicMetadata(file)
+}
+
+export async function getFileContent(id: string) {
+  const file = await findFile(id)
+  try {
+    const stored = await getStorage().download(file.object_key)
+    return {
+      filename: file.filename,
+      content_type: file.content_type,
+      bytes: new Uint8Array(await stored.arrayBuffer()),
+    }
+  } catch (error) {
+    console.error('Neon Object Storage content retrieval failed:', error)
+    throw new AppError('Der Dateiinhalt ist derzeit nicht verfügbar. Bitte lade die Datei herunter oder versuche es später erneut.', 502)
+  }
+}
+
+export async function uploadFile(file: Express.Multer.File | undefined, subjectId: string, assignmentId?: string) {
   if (!file) throw new AppError('Bitte wähle eine Datei zum Hochladen aus.', 400)
   if (file.size > maxFileSize) throw new AppError('Dateien dürfen höchstens 4 MB groß sein.', 413)
   const extension = extname(file.originalname).toLowerCase()
   if (allowedTypes[extension] !== file.mimetype || !hasExpectedSignature(file, extension)) {
     throw new AppError('Dieser Dateityp wird nicht unterstützt oder der Inhalt passt nicht zur Dateiendung.', 415)
+  }
+  if (assignmentId) {
+    const assignments = await query<{ subject_id: string }>(
+      'SELECT subject_id FROM assignments WHERE id = $1',
+      [assignmentId],
+    )
+    if (!assignments[0] || assignments[0].subject_id !== subjectId) {
+      throw new AppError('Die Datei muss derselben Aufgabe und demselben Fach zugeordnet sein.', 400)
+    }
   }
 
   const storage = getStorage()
@@ -70,11 +114,11 @@ export async function uploadFile(file: Express.Multer.File | undefined, subjectI
 
   try {
     const records = await query<StoredFile & Record<string, unknown>>(
-      `INSERT INTO stored_files (subject_id, filename, content_type, size_bytes, object_key)
-        VALUES ($1, $2, $3, $4, $5) RETURNING id, subject_id, filename, content_type, size_bytes::int AS size_bytes, object_key, created_at`,
-      [subjectId, file.originalname, file.mimetype, file.size, objectKey],
+      `INSERT INTO stored_files (subject_id, assignment_id, filename, content_type, size_bytes, object_key)
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, subject_id, assignment_id, filename, content_type, size_bytes::int AS size_bytes, object_key, created_at`,
+      [subjectId, assignmentId ?? null, file.originalname, file.mimetype, file.size, objectKey],
     )
-    return records[0]
+    return publicMetadata(records[0] as StoredFile & Record<string, unknown>)
   } catch (error) {
     await storage.delete(objectKey)
     throw error
@@ -82,15 +126,34 @@ export async function uploadFile(file: Express.Multer.File | undefined, subjectI
 }
 
 export async function renameFile(id: string, filename: string) {
+  return updateFileMetadata(id, { filename })
+}
+
+export async function updateFileMetadata(id: string, changes: { filename?: string; assignment_id?: string | null }) {
   const file = await findFile(id)
-  if (allowedTypes[extname(filename).toLowerCase()] !== file.content_type) {
+  if (changes.filename && allowedTypes[extname(changes.filename).toLowerCase()] !== file.content_type) {
     throw new AppError('Die Dateiendung muss zum ursprünglichen Dateityp passen.', 400)
   }
+  if (changes.assignment_id) {
+    const assignments = await query<{ subject_id: string }>(
+      'SELECT subject_id FROM assignments WHERE id = $1',
+      [changes.assignment_id],
+    )
+    if (!assignments[0] || assignments[0].subject_id !== file.subject_id) {
+      throw new AppError('Die Datei muss derselben Aufgabe und demselben Fach zugeordnet sein.', 400)
+    }
+  }
+  const fields = Object.entries(changes).filter(([, value]) => value !== undefined)
+  const assignments = fields.map(([key], index) => `${key === 'filename' ? 'filename' : 'assignment_id'} = $${index + 1}`)
+  const values = fields.map(([, value]) => value)
+  assignments.push('updated_at = NOW()')
+  values.push(id)
   const records = await query<StoredFile & Record<string, unknown>>(
-    'UPDATE stored_files SET filename = $1, updated_at = NOW() WHERE id = $2 RETURNING id, subject_id, filename, content_type, size_bytes::int AS size_bytes, created_at',
-    [filename, id],
+    `UPDATE stored_files SET ${assignments.join(', ')} WHERE id = $${values.length}
+      RETURNING id, subject_id, assignment_id, filename, content_type, size_bytes::int AS size_bytes, created_at`,
+    values,
   )
-  return records[0]
+  return publicMetadata(records[0] as StoredFile & Record<string, unknown>)
 }
 
 export async function downloadFile(id: string) {
@@ -120,5 +183,22 @@ export async function deleteFile(id: string) {
   const file = await findFile(id)
   const storage = getStorage()
   await storage.delete(file.object_key)
+  await query(
+    `UPDATE presentations p
+      SET slides = (
+        SELECT jsonb_agg(
+          CASE WHEN item.slide->>'image_file_id' = $1
+            THEN jsonb_set(item.slide, '{image_file_id}', 'null'::jsonb)
+            ELSE item.slide
+          END ORDER BY item.ordinality
+        )
+        FROM jsonb_array_elements(p.slides) WITH ORDINALITY AS item(slide, ordinality)
+      ), updated_at = NOW()
+      WHERE EXISTS (
+        SELECT 1 FROM jsonb_array_elements(p.slides) AS item(slide)
+        WHERE item.slide->>'image_file_id' = $1
+      )`,
+    [id],
+  )
   await query('DELETE FROM stored_files WHERE id = $1', [id])
 }

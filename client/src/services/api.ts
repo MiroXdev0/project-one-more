@@ -71,12 +71,13 @@ export function getData<T>(path: string) {
       throw new ApiError('Die Serverantwort für diese Liste ist ungültig. Bitte lade die Seite erneut.', 502)
     }
     if (route === '/dashboard') {
-      const dashboard = response.data as { assignments?: unknown; presentations?: unknown; notes?: unknown; subjects?: unknown; stats?: unknown }
+      const dashboard = response.data as { assignments?: unknown; presentations?: unknown; notes?: unknown; subjects?: unknown; files?: unknown; stats?: unknown }
       if (!dashboard || typeof dashboard !== 'object'
         || !Array.isArray(dashboard.assignments)
         || !Array.isArray(dashboard.presentations)
         || !Array.isArray(dashboard.notes)
         || !Array.isArray(dashboard.subjects)
+        || !Array.isArray(dashboard.files)
         || !dashboard.stats || typeof dashboard.stats !== 'object') {
         throw new ApiError('Die Serverantwort für die Übersicht ist ungültig. Bitte lade die Seite erneut.', 502)
       }
@@ -109,14 +110,36 @@ export function getFilePreview(id: string) {
   return request<{ url: string; content_type: string }>(`/files/${id}/preview`)
 }
 
+export async function getFileContent(id: string) {
+  const base = getApiOrigin()
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), requestTimeoutMs)
+  let response: Response
+  try {
+    response = await fetch(`${base}/api/files/${id}/content`, { signal: controller.signal })
+  } catch {
+    throw new ApiError(controller.signal.aborted
+      ? 'Der Dateiabruf hat zu lange gedauert.'
+      : 'Der Dateiinhalt ist derzeit nicht erreichbar.', 0)
+  } finally {
+    window.clearTimeout(timeout)
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string } | null
+    throw new ApiError(body?.error ?? `Datei konnte nicht geladen werden (${response.status}).`, response.status)
+  }
+  return { blob: await response.blob(), contentType: response.headers.get('Content-Type') ?? 'application/octet-stream' }
+}
+
 export function uploadData(
   file: File,
   subjectId: string,
-  options: { signal?: AbortSignal; onProgress?: (progress: number) => void } = {},
+  options: { signal?: AbortSignal; onProgress?: (progress: number) => void; assignmentId?: string } = {},
 ) {
   const body = new FormData()
   body.append('file', file)
   body.append('subject_id', subjectId)
+  if (options.assignmentId) body.append('assignment_id', options.assignmentId)
   const base = getApiOrigin()
   return new Promise<StoredFile>((resolve, reject) => {
     const xhr = new XMLHttpRequest()

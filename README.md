@@ -50,7 +50,7 @@ The Neon project link (`server/.neon`) and service policy live with the backend 
 
 ## Database and API
 
-`server/src/database/migrations/001_initial.sql` creates the normalized schema and indexes. `npm --prefix server run migrate` records applied migration versions in `schema_migrations`; the DDL is idempotent and existing records are not dropped. Subject foreign keys use `ON DELETE RESTRICT` so a subject with related work cannot be deleted accidentally.
+`server/src/database/migrations/001_initial.sql` creates the normalized schema and indexes. Migration `002_content_viewers.sql` adds persisted presentation slides (backfilling existing presentations from their description and notes) and assignment links for uploaded files. `npm --prefix server run migrate` records applied migration versions in `schema_migrations`; the DDL is additive and existing records are not dropped. Subject foreign keys use `ON DELETE RESTRICT` so a subject with related work cannot be deleted accidentally.
 
 The Express API validates payloads and returns `{ "error": "..." }` for failures:
 
@@ -59,15 +59,16 @@ The Express API validates payloads and returns `{ "error": "..." }` for failures
 | `GET` | `/api/health` | Database health check |
 | `GET` | `/api/dashboard` | Live summary, upcoming work, recent notes, and subjects |
 | `GET`, `POST` | `/api/subjects` | List and create subjects |
-| `PUT`, `DELETE` | `/api/subjects/:id` | Update or delete a subject |
+| `GET`, `PUT`, `DELETE` | `/api/subjects/:id` | Read, update, or delete a subject |
 | `GET`, `POST` | `/api/assignments` | List and create assignments |
-| `PUT`, `DELETE` | `/api/assignments/:id` | Update or delete an assignment |
+| `GET`, `PUT`, `DELETE` | `/api/assignments/:id` | Read, update, or delete an assignment |
 | `GET`, `POST` | `/api/presentations` | List and create presentations |
-| `PUT`, `DELETE` | `/api/presentations/:id` | Update or delete a presentation |
+| `GET`, `PUT`, `DELETE` | `/api/presentations/:id` | Read, update, or delete a presentation and its slides |
 | `GET`, `POST` | `/api/notes` | List and create notes |
-| `PUT`, `DELETE` | `/api/notes/:id` | Update or delete a note |
-| `GET`, `POST` | `/api/files` | List files or upload multipart field `file` with `subject_id` |
-| `GET`, `DELETE` | `/api/files/:id/download`, `/api/files/:id` | Download or delete a stored file |
+| `GET`, `PUT`, `DELETE` | `/api/notes/:id` | Read, update, or delete a note |
+| `GET`, `POST` | `/api/files` | List files or upload multipart field `file` with `subject_id` and optional `assignment_id` |
+| `GET`, `PATCH`, `DELETE` | `/api/files/:id` | Read metadata, rename, or delete a stored file |
+| `GET` | `/api/files/:id/content`, `/api/files/:id/download` | Retrieve private file bytes or a short-lived download URL |
 
 ## Vercel deployment
 
@@ -119,7 +120,7 @@ npm --prefix server run build
 npm --prefix server test
 ```
 
-With valid `DATABASE_URL`, the test suite also creates, lists, updates, and deletes a subject, assignment, presentation, and note; it checks that related subjects cannot be deleted and verifies that the dashboard returns persisted data. With the four generated Neon storage variables, it uploads a file, persists and lists metadata, downloads the file using a short-lived URL, and deletes the object and record. Run those integration tests locally only against a non-production Neon branch; the tests create and clean up records/objects. The dashboard/API health checks and CRUD cannot be verified against the deployed backend until its origin is configured.
+With valid `DATABASE_URL`, the test suite also creates, lists, updates, reads, and deletes a subject, assignment, presentation, and note; it verifies persisted slide data, checks that related subjects cannot be deleted, and verifies that the dashboard returns persisted data. With the four generated Neon storage variables, it uploads a real text file, reads its private content endpoint, verifies assignment attachment metadata and a short-lived download, and deletes the object and record. Run those integration tests locally only against a non-production Neon branch; the tests create and clean up records/objects. The dashboard/API health checks and CRUD cannot be verified against the deployed backend until its origin is configured.
 
 Because this is a shared, unauthenticated workspace, CORS is not an access-control mechanism. Do not expose the API publicly if its data must be private or restricted to a particular group; choose an authenticated deployment before using it for sensitive student records.
 

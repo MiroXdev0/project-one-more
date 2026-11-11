@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { query } from './connection.js'
 
-const migrations = ['001_initial.sql']
+const migrations = ['001_initial.sql', '002_content_viewers.sql']
 
 async function migrate() {
   await query(`CREATE TABLE IF NOT EXISTS schema_migrations (

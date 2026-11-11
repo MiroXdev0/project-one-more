@@ -1,6 +1,12 @@
 export type Priority = 'low' | 'medium' | 'high'
 export type PreparationStatus = 'not_started' | 'in_progress' | 'ready'
 
+export interface PresentationSlide {
+  title: string
+  content: string
+  image_file_id: string | null
+}
+
 export interface Subject {
   id: string
   name: string
@@ -34,6 +40,7 @@ export interface Presentation {
   presentation_date: string
   prep_status: PreparationStatus
   notes: string
+  slides: PresentationSlide[]
   created_at: string
   updated_at: string
 }
@@ -56,6 +63,7 @@ export interface StoredFile {
   filename: string
   content_type: string
   size_bytes: number
+  assignment_id: string | null
   created_at: string
 }
 
@@ -65,6 +73,7 @@ export interface DashboardData {
   presentations: Presentation[]
   notes: Array<Note & { preview: string }>
   subjects: Array<Subject & { assignment_count: number; presentation_count: number }>
+  files: StoredFile[]
 }
 
 export type Resource = Assignment | Presentation | Note | Subject
